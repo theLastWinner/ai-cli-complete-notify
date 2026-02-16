@@ -85,26 +85,6 @@ const DEFAULT_CONFIRM_KEYWORDS = [
   'await your',
   'waiting for your'
 ];
-const DEFAULT_CONFIRM_ACTION_WORDS = [
-  '执行',
-  '删除',
-  '覆盖',
-  '写入',
-  '提交',
-  '安装',
-  '运行',
-  '修改',
-  '变更',
-  'apply',
-  'run',
-  'delete',
-  'overwrite',
-  'write',
-  'install',
-  'execute',
-  'change',
-  'modify'
-];
 const CONFIRM_DEDUPE_MS = 15000;
 
 function normalizeConfirmText(text) {
@@ -122,36 +102,58 @@ function buildConfirmTaskInfo(_text) {
   return '确认提醒';
 }
 
-function parseConfirmKeywords(raw) {
-  if (!raw) return [];
-  return String(raw)
-    .split(/[,\n]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+function hasLineEndingQuestionMark(text) {
+  const raw = String(text || '');
+  if (!raw.trim()) return false;
+  const lines = raw.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/[?？]$/.test(trimmed)) return true;
+  }
+  return false;
 }
 
 function createConfirmDetector(confirmAlert) {
   const enabled =
     confirmAlert && Object.prototype.hasOwnProperty.call(confirmAlert, 'enabled')
       ? Boolean(confirmAlert.enabled)
-      : true;
+      : false;
   if (!enabled) return () => '';
 
-  const custom = parseConfirmKeywords(confirmAlert && confirmAlert.keywords);
-  const keywordPool = [...DEFAULT_CONFIRM_KEYWORDS, ...custom].map((k) => String(k).toLowerCase());
-  const actionPool = [...DEFAULT_CONFIRM_ACTION_WORDS, ...custom].map((k) => String(k).toLowerCase());
+  // Intentionally disable text-based heuristics (question marks / keywords):
+  // - Codex/Claude often stream partial text that contains “是否/？” which caused premature confirm alerts,
+  //   and then suppressed the real `task_complete` completion alert.
+  // - We only send confirm alerts for explicit interactive prompts (Codex `request_user_input`).
+  return () => '';
+}
 
-  return (text) => {
-    const raw = normalizeConfirmText(text);
-    if (!raw) return '';
-    const lower = raw.toLowerCase();
-    const hasKeyword = keywordPool.some((k) => k && lower.includes(k));
-    if (hasKeyword) return raw;
+function createConfirmDetectorDynamic(confirmAlertOrGetter) {
+  const getter = typeof confirmAlertOrGetter === 'function'
+    ? confirmAlertOrGetter
+    : () => confirmAlertOrGetter;
 
-    if (!/[?？]/.test(raw)) return '';
-    const hasAction = actionPool.some((k) => k && lower.includes(k));
-    return hasAction ? raw : '';
+  let lastEnabled = null;
+  let detector = null;
+
+  function refresh() {
+    const current = getter ? getter() : null;
+    const enabled = current && Object.prototype.hasOwnProperty.call(current, 'enabled')
+      ? Boolean(current.enabled)
+      : false;
+
+    if (detector && enabled === lastEnabled) return detector;
+    lastEnabled = enabled;
+    detector = createConfirmDetector({ enabled });
+    return detector;
+  }
+
+  const wrapper = (text) => refresh()(text);
+  wrapper.isEnabled = () => {
+    refresh();
+    return Boolean(lastEnabled);
   };
+  return wrapper;
 }
 
 function safeJsonParse(line) {
@@ -214,6 +216,43 @@ function findLatestFile(rootDir, isCandidate) {
   return latest;
 }
 
+function findLatestFiles(rootDir, isCandidate, limit) {
+  const max = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 1;
+  const latest = [];
+
+  function push(item) {
+    latest.push(item);
+    latest.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    if (latest.length > max) latest.length = max;
+  }
+
+  function walk(dir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_error) {
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!isCandidate(fullPath, entry.name)) continue;
+
+      const stat = safeStat(fullPath);
+      if (!stat) continue;
+      push({ path: fullPath, mtimeMs: stat.mtimeMs, size: stat.size });
+    }
+  }
+
+  walk(rootDir);
+  return latest;
+}
+
 class JsonlFollower {
   constructor({ seedBytes }) {
     this.seedBytes = Number.isFinite(seedBytes) ? seedBytes : 256 * 1024;
@@ -222,7 +261,7 @@ class JsonlFollower {
     this.partial = '';
   }
 
-  attach(filePath, onObject) {
+  attach(filePath, onObject, options = {}) {
     const stat = safeStat(filePath);
     if (!stat) return;
 
@@ -230,14 +269,21 @@ class JsonlFollower {
     this.position = stat.size;
     this.partial = '';
 
+    const emitSeed =
+      options && Object.prototype.hasOwnProperty.call(options, 'emitSeed')
+        ? Boolean(options.emitSeed)
+        : true;
+
     const start = Math.max(0, stat.size - this.seedBytes);
     const seedText = readFileSliceUtf8(filePath, start, stat.size - start);
     let lines = seedText.split(/\r?\n/);
     if (start > 0) lines = lines.slice(1);
-    for (const line of lines) {
-      if (!line) continue;
-      const obj = safeJsonParse(line);
-      if (obj) onObject(obj, { seed: true });
+    if (emitSeed) {
+      for (const line of lines) {
+        if (!line) continue;
+        const obj = safeJsonParse(line);
+        if (obj) onObject(obj, { seed: true });
+      }
     }
   }
 
@@ -281,20 +327,39 @@ function summarizeResult(result) {
   return `sent: ${ok}/${total}`;
 }
 
-async function maybeNotifyConfirm({ source, text, cwd, logger, state, confirmDetector }) {
-  if (typeof confirmDetector !== 'function') return;
-  if (state && state.confirmNotifiedForTurn) return;
-  const prompt = confirmDetector(text);
-  if (!prompt) return;
-  const normalized = normalizeConfirmText(prompt);
-  if (!normalized) return;
+async function maybeNotifyConfirm({
+  source,
+  text,
+  cwd,
+  logger,
+  state,
+  confirmDetector,
+  tag,
+  force,
+  allowMultiplePerTurn = false,
+  markTurnConfirmed = true,
+  dedupeKey = ''
+}) {
+  if (typeof confirmDetector !== 'function') return false;
+  const enabled = typeof confirmDetector.isEnabled === 'function' ? confirmDetector.isEnabled() : true;
+  if (!enabled) return false;
+  if (state && state.confirmNotifiedForTurn && !allowMultiplePerTurn) return false;
 
-  const key = normalized.slice(0, 200);
+  const prompt = force ? String(text || '') : confirmDetector(text);
+  if (!prompt) return false;
+  const normalized = normalizeConfirmText(prompt);
+  if (!normalized) return false;
+
+  const defaultSeed = tag ? `${tag}:${normalized}` : normalized;
+  const keySeed = normalizeConfirmText(dedupeKey || defaultSeed);
+  const keyBase = (keySeed || normalized).slice(0, 200);
+  const turnId = state && typeof state.currentTurnId === 'string' ? state.currentTurnId : '';
+  const key = turnId ? `${turnId}::${keyBase}` : keyBase;
   const now = Date.now();
-  if (state.lastConfirmKey === key && now - (state.lastConfirmAt || 0) < CONFIRM_DEDUPE_MS) return;
-  state.lastConfirmKey = key;
-  state.lastConfirmAt = now;
-  if (state) state.confirmNotifiedForTurn = true;
+  if (state && state.lastConfirmKey === key && now - (state.lastConfirmAt || 0) < CONFIRM_DEDUPE_MS) return false;
+  if (state) state.lastConfirmKey = key;
+  if (state) state.lastConfirmAt = now;
+  if (state && markTurnConfirmed) state.confirmNotifiedForTurn = true;
 
   const taskInfo = buildConfirmTaskInfo(normalized);
   const result = await sendNotifications({
@@ -307,7 +372,9 @@ async function maybeNotifyConfirm({ source, text, cwd, logger, state, confirmDet
     skipSummary: true,
     summaryContext: { assistantMessage: normalized }
   });
-  logger(`[watch][confirm:${source}] ${summarizeResult(result)}`);
+  const suffix = tag ? ` (${tag})` : '';
+  logger(`[watch][confirm:${source}] ${summarizeResult(result)}${suffix}`);
+  return true;
 }
 
 function startClaudeWatch({ intervalMs, quietPeriodMs, log, claudeQuietMs, confirmDetector }) {
@@ -506,99 +573,18 @@ function startClaudeWatch({ intervalMs, quietPeriodMs, log, claudeQuietMs, confi
 function startCodexWatch({ intervalMs, log, confirmDetector }) {
   const logger = makeLogger(log);
   const root = path.join(os.homedir(), '.codex', 'sessions');
-  const follower = new JsonlFollower({ seedBytes: 256 * 1024 });
-  const completionGraceMs = 1500;
+  const completionGraceMs = Math.max(200, Number(process.env.CODEX_TOKEN_GRACE_MS || 1500));
   const strictFinalAnswerOnly = String(process.env.CODEX_STRICT_FINAL_ANSWER || '1').trim() !== '0';
-  const codexCompletionOnly = String(process.env.CODEX_COMPLETION_ONLY || '1').trim() !== '0';
-  const emptyPhaseQuietMs = Math.max(30000, Number(process.env.CODEX_EMPTY_PHASE_QUIET_MS || 120000));
-  const switchIdleMs = 120000;
-  const sessionMetaCwdCache = new Map();
-
-  function normalizePathForCompare(value) {
-    if (!value || typeof value !== 'string') return '';
-    try {
-      return path.resolve(value).replace(/[\\/]+/g, '/').toLowerCase();
-    } catch (_error) {
-      return String(value).replace(/[\\/]+/g, '/').toLowerCase();
-    }
-  }
-
-  function isPathRelated(a, b) {
-    if (!a || !b) return false;
-    return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
-  }
-
-  function readSessionMetaCwd(filePath) {
-    if (!filePath) return '';
-    if (sessionMetaCwdCache.has(filePath)) return sessionMetaCwdCache.get(filePath);
-
-    let cwd = '';
-    try {
-      const stat = safeStat(filePath);
-      if (stat && stat.size > 0) {
-        const size = Math.min(64 * 1024, stat.size);
-        const text = readFileSliceUtf8(filePath, 0, size);
-        const lines = text.split(/\r?\n/);
-        for (const line of lines) {
-          if (!line) continue;
-          const obj = safeJsonParse(line);
-          if (!obj || obj.type !== 'session_meta') continue;
-          const payload = obj.payload;
-          if (payload && typeof payload.cwd === 'string') {
-            cwd = normalizePathForCompare(payload.cwd);
-          }
-          break;
-        }
-      }
-    } catch (_error) {
-      cwd = '';
-    }
-
-    sessionMetaCwdCache.set(filePath, cwd);
-    return cwd;
-  }
-
-  function findPreferredSessionFile(preferredCwd) {
-    let latestAny = null;
-    let latestPreferred = null;
-    const preferred = normalizePathForCompare(preferredCwd);
-
-    function walk(dir) {
-      let entries;
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch (_error) {
-        return;
-      }
-
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(fullPath);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        if (!entry.name.toLowerCase().endsWith('.jsonl')) continue;
-
-        const stat = safeStat(fullPath);
-        if (!stat) continue;
-
-        if (!latestAny || stat.mtimeMs > latestAny.mtimeMs) {
-          latestAny = { path: fullPath, mtimeMs: stat.mtimeMs, size: stat.size };
-        }
-
-        if (!preferred) continue;
-        const sessionCwd = readSessionMetaCwd(fullPath);
-        if (!sessionCwd || !isPathRelated(sessionCwd, preferred)) continue;
-        if (!latestPreferred || stat.mtimeMs > latestPreferred.mtimeMs) {
-          latestPreferred = { path: fullPath, mtimeMs: stat.mtimeMs, size: stat.size };
-        }
-      }
-    }
-
-    walk(root);
-    return latestPreferred || latestAny;
-  }
+  // NOTE: Codex sessions commonly emit `event_msg:task_complete` without a `phase=final_answer` marker.
+  // Prefer the explicit task_complete signal for immediate + accurate completion notifications.
+  const finalAnswerQuietMs = Math.max(300, Number(process.env.CODEX_FINAL_ANSWER_QUIET_MS || 800));
+  // Fallback when `task_complete` is missing (rare) or delayed: treat "assistant message + quiet window"
+  // as completion. Keep this window short to reduce perceived latency, but long enough to avoid false positives.
+  const emptyPhaseQuietMs = Math.max(3000, Number(process.env.CODEX_EMPTY_PHASE_QUIET_MS || 15000));
+  const followTopN = Math.max(1, Number(process.env.CODEX_FOLLOW_TOP_N || 5));
+  // When we attach to a just-created session, its first turn may already be fully written.
+  // Re-scan the seed window and treat recent lines as "live" so confirm/complete notifications are not missed.
+  const seedCatchupMs = Math.max(0, Number(process.env.CODEX_SEED_CATCHUP_MS || 30000));
 
   function isCodexWorkResponseType(type) {
     return [
@@ -612,287 +598,815 @@ function startCodexWatch({ intervalMs, log, confirmDetector }) {
     ].includes(type);
   }
 
-  const state = {
-    currentFile: null,
-    tickRunning: false,
-    lastEventAt: 0,
-    attachedAt: 0,
-    lastUserAt: null,
-    lastAssistantAt: null,
-    lastNotifiedAssistantAt: null,
-    lastCwd: null,
-    lastAgentContent: null,
-    lastUserText: '',
-    lastAssistantText: '',
-    lastConfirmKey: '',
-    lastConfirmAt: 0,
-    confirmNotifiedForTurn: false,
-    pendingCompletion: null
-  };
+  function extractRequestUserInputText(payload) {
+    if (!payload || typeof payload !== 'object') return '需要你确认下一步？';
 
-  function clearPendingCompletion() {
-    const pending = state.pendingCompletion;
-    if (!pending) return;
-    if (pending.timer) {
-      clearTimeout(pending.timer);
+    const rawArgs = payload.arguments != null ? payload.arguments : (payload.function && payload.function.arguments);
+    let args = null;
+    if (rawArgs && typeof rawArgs === 'object') {
+      args = rawArgs;
+    } else if (typeof rawArgs === 'string') {
+      args = safeJsonParse(rawArgs);
     }
-    state.pendingCompletion = null;
-  }
 
-  function stagePendingCompletion(ts, options = {}) {
-    clearPendingCompletion();
-    const assistantAt = ts != null ? ts : Date.now();
-    state.lastAssistantAt = assistantAt;
-    const tokenRequired = options && Object.prototype.hasOwnProperty.call(options, 'tokenRequired')
-      ? Boolean(options.tokenRequired)
-      : true;
-    const quietMs = options && Number.isFinite(Number(options.quietMs)) ? Number(options.quietMs) : 0;
-    state.pendingCompletion = {
-      assistantAt,
-      tokenRequired,
-      tokenSeen: false,
-      tokenAt: null,
-      timer: null
+    const lines = [];
+    const questions = args && Array.isArray(args.questions) ? args.questions : [];
+
+    const ensureQuestion = (value) => {
+      const trimmed = String(value || '').trim();
+      if (!trimmed) return '';
+      return /[?？]$/.test(trimmed) ? trimmed : `${trimmed}？`;
     };
 
-    if (quietMs > 0) {
-      state.pendingCompletion.timer = setTimeout(() => {
-        void flushPendingCompletion('quiet_fallback', { allowWithoutToken: true });
-      }, quietMs);
-    }
-  }
+    const pushOptions = (options) => {
+      const labels = Array.isArray(options)
+        ? options
+          .map((o) => (o && typeof o.label === 'string' ? o.label.trim() : ''))
+          .filter(Boolean)
+        : [];
+      if (labels.length) lines.push(`选项: ${labels.join(' / ')}`);
+    };
 
-  function markPendingTokenSeen(ts) {
-    const pending = state.pendingCompletion;
-    if (!pending) return;
-    if (!pending.tokenRequired) return;
-    pending.tokenSeen = true;
-    pending.tokenAt = ts != null ? ts : Date.now();
-    if (pending.timer) clearTimeout(pending.timer);
-    pending.timer = setTimeout(() => {
-      void flushPendingCompletion('token_grace');
-    }, completionGraceMs);
-  }
-
-  async function flushPendingCompletion(reason, options = {}) {
-    const pending = state.pendingCompletion;
-    const allowWithoutToken = Boolean(options && options.allowWithoutToken);
-    if (!pending) return false;
-    if (pending.tokenRequired && !pending.tokenSeen && !allowWithoutToken) return false;
-
-    clearPendingCompletion();
-
-    if (state.confirmNotifiedForTurn) {
-      logger(`[watch][codex] skipped completion (${reason}: confirm alert sent)`);
-      return false;
-    }
-
-    const assistantAt = pending.assistantAt;
-    if (assistantAt != null && state.lastNotifiedAssistantAt === assistantAt) {
-      return false;
-    }
-
-    const durationMs =
-      assistantAt != null && state.lastUserAt != null && assistantAt >= state.lastUserAt
-        ? assistantAt - state.lastUserAt
-        : null;
-    const cwd = state.lastCwd || process.cwd();
-    const result = await sendNotifications({
-      source: 'codex',
-      taskInfo: 'Codex 完成',
-      durationMs,
-      cwd,
-      outputContent: state.lastAgentContent || state.lastAssistantText,
-      summaryContext: {
-        userMessage: state.lastUserText,
-        assistantMessage: state.lastAssistantText
+    if (questions.length) {
+      for (const q of questions) {
+        const header = q && typeof q.header === 'string' ? q.header.trim() : '';
+        const question = q && typeof q.question === 'string' ? q.question.trim() : '';
+        if (header) lines.push(header);
+        if (question) lines.push(ensureQuestion(question));
+        pushOptions(q && q.options);
       }
-    });
-
-    state.lastNotifiedAssistantAt = assistantAt;
-    state.confirmNotifiedForTurn = true;
-    logger(`[watch][codex] ${summarizeResult(result)} (${reason})`);
-    return true;
-  }
-
-  async function processObject(obj, { seed }) {
-    if (!obj || typeof obj !== 'object') return;
-    const ts = parseTimestamp(obj.timestamp);
-
-    if (!seed) {
-      state.lastEventAt = Date.now();
+    } else {
+      const question = args && typeof args.question === 'string' ? args.question.trim() : '';
+      if (question) lines.push(ensureQuestion(question));
+      pushOptions(args && args.options);
     }
 
-    if (obj.type === 'turn_context') {
+    if (!lines.length) lines.push('需要你确认下一步？');
+    // Ensure detector can trigger even if upstream forgot punctuation.
+    if (!lines.some((line) => /[?？]\s*$/.test(String(line).trim()))) {
+      lines[0] = ensureQuestion(lines[0]);
+    }
+
+    return lines.join('\n').trim();
+  }
+
+  function hasOptionsInRequestPrompt(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return false;
+    const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return lines.some((line) => /^(选项|options?)\s*[:：]/i.test(line));
+  }
+
+  function buildRequestUserInputDedupeKey(payload, ts) {
+    if (!payload || typeof payload !== 'object') {
+      return `request_user_input:${ts != null ? ts : Date.now()}`;
+    }
+    const ids = [];
+    if (typeof payload.call_id === 'string') ids.push(payload.call_id);
+    if (typeof payload.id === 'string') ids.push(payload.id);
+    if (typeof payload.tool_call_id === 'string') ids.push(payload.tool_call_id);
+    if (typeof payload.function_call_id === 'string') ids.push(payload.function_call_id);
+    if (payload.function && typeof payload.function.call_id === 'string') ids.push(payload.function.call_id);
+    if (ids.length) return `request_user_input:${ids.join('|')}`;
+
+    const turnPart = typeof payload.turn_id === 'string' ? payload.turn_id : '';
+    const timePart = ts != null ? ts : Date.now();
+    return `request_user_input:${turnPart}:${timePart}`;
+  }
+
+  // Turn-end prompt detection (text-only, no interactive `request_user_input`).
+  // We run this ONLY at `task_complete` to avoid premature alerts during streaming output.
+  const CODEX_TURN_END_CONFIRM_CUES = [
+    // CN
+    '请确认',
+    '是否继续',
+    '是否开始',
+    '是否开始执行',
+    '是否执行',
+    '是否同意',
+    '是否允许',
+    '是否授权',
+    '请选择',
+    '请选',
+    '你希望',
+    '你想',
+    '你要',
+    '要不要',
+    '可以吗',
+    '可以么',
+    '能否',
+    '可否',
+    // EN
+    'please confirm',
+    'confirm',
+    'approve',
+    'approval',
+    'proceed',
+    'continue',
+    'should i',
+    'shall i',
+    'do you want me',
+    'would you like',
+    'may i'
+  ];
+  const CODEX_TURN_END_CONFIRM_CUES_LOWER = CODEX_TURN_END_CONFIRM_CUES.map((x) => String(x).toLowerCase());
+  const CODEX_TURN_END_ACTION_WORDS = [
+    // CN (verbs that usually imply "waiting for your input")
+    '开始',
+    '继续',
+    '执行',
+    '确认',
+    '选择',
+    '提交',
+    '授权',
+    '允许',
+    '同意',
+    // EN
+    'proceed',
+    'continue',
+    'execute',
+    'run',
+    'confirm',
+    'choose',
+    'select',
+    'approve',
+    'authorize'
+  ];
+  const CODEX_TURN_END_ACTION_WORDS_LOWER = CODEX_TURN_END_ACTION_WORDS.map((x) => String(x).toLowerCase());
+
+  function extractTailLines(text, maxLines, maxChars) {
+    const raw = String(text || '').replace(/\r\n/g, '\n').trim();
+    if (!raw) return '';
+
+    const limited = raw.length > maxChars ? raw.slice(raw.length - maxChars) : raw;
+    const lines = limited
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const tail = lines.slice(Math.max(0, lines.length - Math.max(1, maxLines)));
+    return tail.join('\n').trim();
+  }
+
+  function detectTurnEndConfirmPrompt(text, { planMode }) {
+    const snippet = extractTailLines(text, 6, 1200);
+    if (!snippet) return '';
+
+    const lower = snippet.toLowerCase();
+    const tailWindow = lower.slice(Math.max(0, lower.length - 500));
+    const lastLine = snippet.split('\n').map((l) => l.trim()).filter(Boolean).slice(-1)[0] || '';
+    const endsWithQuestion = /[?？]\s*$/.test(lastLine);
+
+    const cueNearEnd = CODEX_TURN_END_CONFIRM_CUES_LOWER.some((k) => k && tailWindow.includes(k));
+    if (cueNearEnd) return snippet;
+
+    const actionNearEnd = CODEX_TURN_END_ACTION_WORDS_LOWER.some((k) => k && tailWindow.includes(k));
+    if (endsWithQuestion && actionNearEnd) {
+      // A short, action-oriented question at the end of a turn usually means "waiting for user input".
+      return snippet.length <= 600 ? snippet : extractTailLines(snippet, 3, 600);
+    }
+
+    return '';
+  }
+
+  function createSession(filePath) {
+    const follower = new JsonlFollower({ seedBytes: 256 * 1024 });
+    const state = {
+      filePath,
+      lastEventAt: 0,
+      attachedAt: Date.now(),
+      lastUserAt: null,
+      lastAssistantAt: null,
+      lastNotifiedAssistantAt: null,
+      lastTaskStartedAt: null,
+      currentTurnId: null,
+      collaborationModeKind: '',
+      lastNotifiedTurnId: null,
+      lastCwd: null,
+      lastAgentContent: null,
+      lastUserText: '',
+      lastAssistantText: '',
+      lastRequestUserInputPrompt: '',
+      lastConfirmKey: '',
+      lastConfirmAt: 0,
+      confirmNotifiedForTurn: false,
+      // Plan mode interactive prompts (`request_user_input`) mean the turn ends waiting for user input.
+      // We should never treat that as "task completed".
+      interactionRequiredForTurn: false,
+      pendingRequestUserInputCallIds: new Set(),
+      pendingRequestUserInputWithoutId: 0,
+      lastInteractionResolvedAt: null,
+      interactionLoggedForTurn: false,
+      interactionNotifiedForTurn: false,
+      pendingCompletion: null
+    };
+
+    function clearPendingCompletion() {
+      const pending = state.pendingCompletion;
+      if (!pending) return;
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
+      state.pendingCompletion = null;
+    }
+
+    function stagePendingCompletion(ts, options = {}) {
       clearPendingCompletion();
-      if (obj.payload && typeof obj.payload.cwd === 'string') {
-        state.lastCwd = obj.payload.cwd;
+      const assistantAt = ts != null ? ts : Date.now();
+      state.lastAssistantAt = assistantAt;
+      const tokenRequired = options && Object.prototype.hasOwnProperty.call(options, 'tokenRequired')
+        ? Boolean(options.tokenRequired)
+        : true;
+      const quietMs = options && Number.isFinite(Number(options.quietMs)) ? Number(options.quietMs) : 0;
+      state.pendingCompletion = {
+        assistantAt,
+        tokenRequired,
+        tokenSeen: false,
+        tokenAt: null,
+        timer: null
+      };
+
+      if (quietMs > 0) {
+        state.pendingCompletion.timer = setTimeout(() => {
+          void flushPendingCompletion('quiet_fallback', { allowWithoutToken: true });
+        }, quietMs);
       }
-      return;
     }
 
-    if (obj.type === 'response_item' && obj.payload && obj.payload.type === 'message' && obj.payload.role === 'user') {
+    function markPendingTokenSeen(ts) {
+      const pending = state.pendingCompletion;
+      if (!pending) return;
+      if (!pending.tokenRequired) return;
+      pending.tokenSeen = true;
+      pending.tokenAt = ts != null ? ts : Date.now();
+      if (pending.timer) clearTimeout(pending.timer);
+      pending.timer = setTimeout(() => {
+        void flushPendingCompletion('token_grace');
+      }, completionGraceMs);
+    }
+
+    async function flushPendingCompletion(reason, options = {}) {
+      const pending = state.pendingCompletion;
+      const allowWithoutToken = Boolean(options && options.allowWithoutToken);
+      if (!pending) return false;
+      if (pending.tokenRequired && !pending.tokenSeen && !allowWithoutToken) return false;
+
+      clearPendingCompletion();
+
+      if (state.confirmNotifiedForTurn) {
+        logger(`[watch][codex] skipped completion (${reason}: confirm alert sent)`);
+        return false;
+      }
+
+      const assistantAt = pending.assistantAt;
+      if (assistantAt != null && state.lastNotifiedAssistantAt === assistantAt) {
+        return false;
+      }
+
+      const startAt = state.lastUserAt != null ? state.lastUserAt : state.lastTaskStartedAt;
+      const durationMs =
+        assistantAt != null && startAt != null && assistantAt >= startAt
+          ? assistantAt - startAt
+          : null;
+      const cwd = state.lastCwd || process.cwd();
+      const result = await sendNotifications({
+        source: 'codex',
+        taskInfo: 'Codex 完成',
+        durationMs,
+        cwd,
+        outputContent: state.lastAgentContent || state.lastAssistantText,
+        summaryContext: {
+          userMessage: state.lastUserText,
+          assistantMessage: state.lastAssistantText
+        }
+      });
+
+      state.lastNotifiedAssistantAt = assistantAt;
+      state.confirmNotifiedForTurn = true;
+      logger(`[watch][codex] ${summarizeResult(result)} (${reason})`);
+      return true;
+    }
+
+    async function processObject(obj, { seed }) {
+      if (!obj || typeof obj !== 'object') return;
+      const ts = parseTimestamp(obj.timestamp);
+
       if (!seed) {
-        await flushPendingCompletion('before_user_message', { allowWithoutToken: true });
-      }
-      clearPendingCompletion();
-      state.lastUserAt = ts;
-      state.lastUserText = extractTextFromAny(obj.payload);
-      state.lastConfirmKey = '';
-      state.confirmNotifiedForTurn = false;
-      return;
-    }
-
-    if (obj.type === 'response_item' && obj.payload && isCodexWorkResponseType(obj.payload.type)) {
-      clearPendingCompletion();
-      return;
-    }
-
-    if (obj.type === 'response_item' && obj.payload && obj.payload.type === 'message' && obj.payload.role === 'assistant') {
-      if (seed) return;
-
-      clearPendingCompletion();
-
-      const phase = typeof obj.payload.phase === 'string' ? obj.payload.phase : '';
-
-      const assistantText = extractTextFromAny(obj.payload);
-      if (assistantText) {
-        state.lastAssistantText = assistantText;
-        state.lastAgentContent = assistantText;
+        state.lastEventAt = Date.now();
       }
 
-      if (!codexCompletionOnly) {
-        await maybeNotifyConfirm({
+      if (obj.type === 'turn_context') {
+        if (obj.payload && typeof obj.payload.cwd === 'string') {
+          state.lastCwd = obj.payload.cwd;
+        }
+        if (obj.payload && typeof obj.payload.turn_id === 'string') {
+          const nextTurnId = obj.payload.turn_id;
+          if (state.currentTurnId && state.currentTurnId !== nextTurnId) {
+            clearPendingCompletion();
+            state.lastRequestUserInputPrompt = '';
+            state.lastConfirmKey = '';
+            state.confirmNotifiedForTurn = false;
+            state.interactionRequiredForTurn = false;
+            state.pendingRequestUserInputCallIds.clear();
+            state.pendingRequestUserInputWithoutId = 0;
+            state.lastInteractionResolvedAt = null;
+            state.interactionLoggedForTurn = false;
+            state.interactionNotifiedForTurn = false;
+          }
+          state.currentTurnId = obj.payload.turn_id;
+        }
+        if (obj.payload && obj.payload.collaboration_mode && typeof obj.payload.collaboration_mode.mode === 'string') {
+          state.collaborationModeKind = obj.payload.collaboration_mode.mode;
+        }
+        return;
+      }
+
+      if (obj.type === 'response_item' && obj.payload && obj.payload.type === 'message' && obj.payload.role === 'user') {
+        if (!seed) {
+          await flushPendingCompletion('before_user_message', { allowWithoutToken: true });
+        }
+        clearPendingCompletion();
+        state.lastTaskStartedAt = null;
+        state.lastUserAt = ts;
+        state.lastUserText = extractTextFromAny(obj.payload);
+        state.lastRequestUserInputPrompt = '';
+        state.lastConfirmKey = '';
+        state.confirmNotifiedForTurn = false;
+        state.interactionRequiredForTurn = false;
+        state.pendingRequestUserInputCallIds.clear();
+        state.pendingRequestUserInputWithoutId = 0;
+        state.lastInteractionResolvedAt = null;
+        state.interactionLoggedForTurn = false;
+        state.interactionNotifiedForTurn = false;
+        return;
+      }
+
+      // Codex Plan mode interactive prompts: request_user_input (single-choice / submit UI).
+      // These are emitted as a tool call item (e.g. `function_call` / `custom_tool_call`) with name `request_user_input`.
+      if (
+        obj.type === 'response_item'
+        && obj.payload
+        && ['function_call', 'custom_tool_call', 'tool_use'].includes(obj.payload.type)
+        && (
+          obj.payload.name === 'request_user_input'
+          || obj.payload.function_name === 'request_user_input'
+          || (obj.payload.function && obj.payload.function.name === 'request_user_input')
+        )
+      ) {
+        clearPendingCompletion();
+        state.interactionRequiredForTurn = true;
+        state.lastInteractionResolvedAt = null;
+        {
+          const requestCallId =
+            (typeof obj.payload.call_id === 'string' && obj.payload.call_id.trim())
+            || (typeof obj.payload.id === 'string' && obj.payload.id.trim())
+            || (typeof obj.payload.tool_call_id === 'string' && obj.payload.tool_call_id.trim())
+            || (typeof obj.payload.function_call_id === 'string' && obj.payload.function_call_id.trim())
+            || '';
+          if (requestCallId) state.pendingRequestUserInputCallIds.add(requestCallId);
+          else state.pendingRequestUserInputWithoutId += 1;
+        }
+        state.lastRequestUserInputPrompt = extractRequestUserInputText(obj.payload);
+        if (seed) return;
+
+        const confirmEnabled = typeof confirmDetector?.isEnabled === 'function' ? confirmDetector.isEnabled() : true;
+        if (!confirmEnabled) {
+          if (!state.interactionLoggedForTurn) {
+            state.interactionLoggedForTurn = true;
+            logger('[watch][codex] detected request_user_input (confirm disabled)');
+          }
+          return;
+        }
+
+        const sent = await maybeNotifyConfirm({
           source: 'codex',
-          text: assistantText,
+          text: state.lastRequestUserInputPrompt,
           cwd: state.lastCwd || process.cwd(),
           logger,
           state,
-          confirmDetector
+          confirmDetector,
+          tag: 'plan_request_user_input',
+          force: true,
+          allowMultiplePerTurn: true,
+          markTurnConfirmed: false,
+          dedupeKey: buildRequestUserInputDedupeKey(obj.payload, ts)
         });
-      }
+        if (sent) state.interactionNotifiedForTurn = true;
 
-      if (state.confirmNotifiedForTurn) {
         return;
       }
 
-      if (phase === 'commentary') {
-        return;
-      }
+      if (
+        obj.type === 'response_item'
+        && obj.payload
+        && ['function_call_output', 'custom_tool_call_output'].includes(obj.payload.type)
+      ) {
+        const outputCallId =
+          (typeof obj.payload.call_id === 'string' && obj.payload.call_id.trim())
+          || (typeof obj.payload.id === 'string' && obj.payload.id.trim())
+          || (typeof obj.payload.tool_call_id === 'string' && obj.payload.tool_call_id.trim())
+          || (typeof obj.payload.function_call_id === 'string' && obj.payload.function_call_id.trim())
+          || '';
 
-      if (!phase && strictFinalAnswerOnly) {
-        stagePendingCompletion(ts, { tokenRequired: false, quietMs: emptyPhaseQuietMs });
-        return;
-      }
-
-      if (phase && phase !== 'final_answer') {
-        return;
-      }
-
-      stagePendingCompletion(ts, { tokenRequired: true });
-      return;
-    }
-
-    if (obj.type === 'event_msg' && obj.payload && typeof obj.payload.type === 'string') {
-      const kind = obj.payload.type;
-      if (kind === 'user_message') {
-        if (!seed) {
-          await flushPendingCompletion('before_user_event', { allowWithoutToken: true });
+        if (outputCallId && state.pendingRequestUserInputCallIds.has(outputCallId)) {
+          state.pendingRequestUserInputCallIds.delete(outputCallId);
+        } else if (!outputCallId && state.pendingRequestUserInputWithoutId > 0) {
+          state.pendingRequestUserInputWithoutId = Math.max(0, state.pendingRequestUserInputWithoutId - 1);
         }
-        clearPendingCompletion();
-        state.lastUserAt = ts;
-        state.lastUserText = extractTextFromAny(obj.payload);
-        state.lastConfirmKey = '';
-        state.confirmNotifiedForTurn = false;
-        return;
-      }
 
-      if (kind === 'token_count') {
-        if (!seed) {
-          markPendingTokenSeen(ts);
+        if (
+          state.pendingRequestUserInputCallIds.size === 0
+          && state.pendingRequestUserInputWithoutId === 0
+        ) {
+          state.interactionRequiredForTurn = false;
+          state.lastInteractionResolvedAt = ts != null ? ts : Date.now();
+          state.lastRequestUserInputPrompt = '';
         }
-        return;
       }
 
-      if (kind === 'agent_reasoning') {
+      if (obj.type === 'response_item' && obj.payload && isCodexWorkResponseType(obj.payload.type)) {
         clearPendingCompletion();
         return;
       }
 
-      if (kind === 'agent_message') {
+      if (obj.type === 'response_item' && obj.payload && obj.payload.type === 'message' && obj.payload.role === 'assistant') {
         if (seed) return;
+
+        clearPendingCompletion();
+
         const assistantText = extractTextFromAny(obj.payload);
-        if (assistantText) state.lastAssistantText = assistantText;
+        if (assistantText) {
+          state.lastAssistantText = assistantText;
+          state.lastAgentContent = assistantText;
+        }
+        state.lastAssistantAt = ts != null ? ts : Date.now();
 
-        let content = null;
-        if (obj.payload && typeof obj.payload.content === 'string') {
-          content = obj.payload.content;
-        } else if (obj.payload && obj.payload.message && typeof obj.payload.message === 'string') {
-          content = obj.payload.message;
-        } else if (obj.payload && obj.payload.text && typeof obj.payload.text === 'string') {
-          content = obj.payload.text;
-        } else if (obj.payload && obj.payload.data && typeof obj.payload.data === 'string') {
-          content = obj.payload.data;
-        } else if (obj.message && typeof obj.message === 'string') {
-          content = obj.message;
+        // Completion for Codex is driven by `event_msg:task_complete` only.
+        // This avoids premature reminders during streaming output and prevents suppressing the real completion.
+        return;
+      }
+
+      if (obj.type === 'event_msg' && obj.payload && typeof obj.payload.type === 'string') {
+        const kind = obj.payload.type;
+
+        if (kind === 'task_started') {
+          if (!seed) {
+            await flushPendingCompletion('before_task_started', { allowWithoutToken: true });
+          }
+          if (obj.payload && typeof obj.payload.turn_id === 'string') {
+            state.currentTurnId = obj.payload.turn_id;
+          }
+          if (obj.payload && typeof obj.payload.collaboration_mode_kind === 'string') {
+            state.collaborationModeKind = obj.payload.collaboration_mode_kind;
+          }
+          state.lastTaskStartedAt = ts;
+          // New turn begins; reset per-turn dedupe/flags.
+          state.lastRequestUserInputPrompt = '';
+          state.lastConfirmKey = '';
+          state.confirmNotifiedForTurn = false;
+          state.interactionRequiredForTurn = false;
+          state.pendingRequestUserInputCallIds.clear();
+          state.pendingRequestUserInputWithoutId = 0;
+          state.lastInteractionResolvedAt = null;
+          state.interactionLoggedForTurn = false;
+          state.interactionNotifiedForTurn = false;
+          clearPendingCompletion();
+          return;
         }
 
-        if (content && content.trim()) {
-          state.lastAgentContent = content;
-        }
+        if (kind === 'task_complete') {
+          if (seed) return;
 
-        if (!codexCompletionOnly) {
-          await maybeNotifyConfirm({
+          const turnId = obj.payload && typeof obj.payload.turn_id === 'string' ? obj.payload.turn_id : null;
+          if (turnId && state.lastNotifiedTurnId === turnId) return;
+
+          clearPendingCompletion();
+
+          const completionAt = ts != null ? ts : Date.now();
+          const lastAgentMessage = obj.payload && typeof obj.payload.last_agent_message === 'string'
+            ? obj.payload.last_agent_message
+            : '';
+          if (lastAgentMessage) {
+            state.lastAssistantText = lastAgentMessage;
+            state.lastAgentContent = lastAgentMessage;
+            state.lastAssistantAt = completionAt;
+          }
+          const assistantStaleByInteraction =
+            !lastAgentMessage
+            && state.lastInteractionResolvedAt != null
+            && state.lastAssistantAt != null
+            && state.lastAssistantAt <= state.lastInteractionResolvedAt;
+
+          const confirmEnabled = typeof confirmDetector?.isEnabled === 'function' ? confirmDetector.isEnabled() : true;
+
+          if (state.interactionRequiredForTurn) {
+            let sentInThisTaskComplete = false;
+            const requestPrompt = String(state.lastRequestUserInputPrompt || '').trim();
+            const requestHasOptions = hasOptionsInRequestPrompt(requestPrompt);
+
+            // Prefer explicit option prompts when available (more actionable than tail text).
+            if (confirmEnabled && requestHasOptions) {
+              const sent = await maybeNotifyConfirm({
+                source: 'codex',
+                text: requestPrompt,
+                cwd: state.lastCwd || process.cwd(),
+                logger,
+                state,
+                confirmDetector,
+                tag: 'plan_request_user_input_fallback',
+                force: true,
+                allowMultiplePerTurn: true,
+                markTurnConfirmed: false,
+                dedupeKey: `request_user_input_options:${turnId || ''}:${completionAt}`
+              });
+              if (sent) {
+                sentInThisTaskComplete = true;
+                state.interactionNotifiedForTurn = true;
+                if (turnId) state.lastNotifiedTurnId = turnId;
+              }
+            }
+
+            if (confirmEnabled) {
+              const prompt = detectTurnEndConfirmPrompt(state.lastAgentContent || state.lastAssistantText, {
+                planMode: String(state.collaborationModeKind || '').toLowerCase() === 'plan'
+              });
+              if (prompt && !sentInThisTaskComplete) {
+                const sent = await maybeNotifyConfirm({
+                  source: 'codex',
+                  text: prompt,
+                  cwd: state.lastCwd || process.cwd(),
+                  logger,
+                  state,
+                  confirmDetector,
+                  tag: 'turn_end_question',
+                  force: true,
+                  allowMultiplePerTurn: true,
+                  markTurnConfirmed: false,
+                  dedupeKey: `turn_end_question:${turnId || ''}:${completionAt}`
+                });
+                if (sent) {
+                  sentInThisTaskComplete = true;
+                  state.interactionNotifiedForTurn = true;
+                  if (turnId) state.lastNotifiedTurnId = turnId;
+                }
+              }
+            }
+
+            if (confirmEnabled && !sentInThisTaskComplete && !state.interactionNotifiedForTurn) {
+              const fallbackText =
+                requestPrompt
+                || String(state.lastAgentContent || state.lastAssistantText || '').trim()
+                || '需要你确认下一步？';
+              const sent = await maybeNotifyConfirm({
+                source: 'codex',
+                text: fallbackText,
+                cwd: state.lastCwd || process.cwd(),
+                logger,
+                state,
+                confirmDetector,
+                tag: 'plan_request_user_input_fallback',
+                force: true,
+                allowMultiplePerTurn: true,
+                markTurnConfirmed: false,
+                dedupeKey: `request_user_input_fallback:${turnId || ''}:${completionAt}`
+              });
+              if (sent) {
+                state.interactionNotifiedForTurn = true;
+                if (turnId) state.lastNotifiedTurnId = turnId;
+              }
+            }
+            logger('[watch][codex] skipped completion (task_complete: interaction required)');
+            return;
+          }
+
+          if (state.confirmNotifiedForTurn) {
+            logger('[watch][codex] skipped completion (task_complete: already notified)');
+            return;
+          }
+
+          if (confirmEnabled && !assistantStaleByInteraction) {
+            const prompt = detectTurnEndConfirmPrompt(state.lastAgentContent || state.lastAssistantText, {
+              planMode: String(state.collaborationModeKind || '').toLowerCase() === 'plan'
+            });
+            if (prompt) {
+              const sent = await maybeNotifyConfirm({
+                source: 'codex',
+                text: prompt,
+                cwd: state.lastCwd || process.cwd(),
+                logger,
+                state,
+                confirmDetector,
+                tag: 'turn_end_question',
+                force: true,
+                dedupeKey: `turn_end_question:${turnId || ''}:${completionAt}`
+              });
+              if (sent) state.interactionNotifiedForTurn = true;
+              if (turnId) state.lastNotifiedTurnId = turnId;
+              logger('[watch][codex] skipped completion (task_complete: question)');
+              return;
+            }
+          }
+
+          const startAt = state.lastUserAt != null ? state.lastUserAt : state.lastTaskStartedAt;
+          const durationMs =
+            startAt != null && completionAt >= startAt
+              ? completionAt - startAt
+              : null;
+          const completionOutput =
+            lastAgentMessage
+            || (assistantStaleByInteraction ? '' : String(state.lastAgentContent || state.lastAssistantText || '').trim());
+
+          const cwd = state.lastCwd || process.cwd();
+          const result = await sendNotifications({
             source: 'codex',
-            text: assistantText || content,
-            cwd: state.lastCwd || process.cwd(),
-            logger,
-            state,
-            confirmDetector
+            taskInfo: 'Codex 完成',
+            durationMs,
+            cwd,
+            outputContent: completionOutput,
+            summaryContext: {
+              userMessage: state.lastUserText,
+              assistantMessage: completionOutput || state.lastAssistantText
+            }
           });
+
+          state.lastNotifiedAssistantAt = completionAt;
+          if (turnId) state.lastNotifiedTurnId = turnId;
+          state.confirmNotifiedForTurn = true;
+          logger(`[watch][codex] ${summarizeResult(result)} (task_complete)`);
+          return;
+        }
+
+        if (kind === 'user_message') {
+          if (!seed) {
+            await flushPendingCompletion('before_user_event', { allowWithoutToken: true });
+          }
+          clearPendingCompletion();
+          state.lastTaskStartedAt = null;
+          state.lastUserAt = ts;
+          state.lastUserText = extractTextFromAny(obj.payload);
+          state.lastRequestUserInputPrompt = '';
+          state.lastConfirmKey = '';
+          state.confirmNotifiedForTurn = false;
+          state.interactionRequiredForTurn = false;
+          state.pendingRequestUserInputCallIds.clear();
+          state.pendingRequestUserInputWithoutId = 0;
+          state.lastInteractionResolvedAt = null;
+          state.interactionLoggedForTurn = false;
+          state.interactionNotifiedForTurn = false;
+          return;
+        }
+
+        if (kind === 'token_count') {
+          // Kept for backward-compat (older Codex session formats).
+          if (!seed) markPendingTokenSeen(ts);
+          return;
+        }
+
+        if (kind === 'agent_reasoning') {
+          clearPendingCompletion();
+          return;
+        }
+
+        if (kind === 'agent_message') {
+          if (seed) return;
+          const assistantText = extractTextFromAny(obj.payload);
+          if (assistantText) state.lastAssistantText = assistantText;
+          state.lastAssistantAt = ts != null ? ts : Date.now();
+
+          let content = null;
+          if (obj.payload && typeof obj.payload.content === 'string') {
+            content = obj.payload.content;
+          } else if (obj.payload && obj.payload.message && typeof obj.payload.message === 'string') {
+            content = obj.payload.message;
+          } else if (obj.payload && obj.payload.text && typeof obj.payload.text === 'string') {
+            content = obj.payload.text;
+          } else if (obj.payload && obj.payload.data && typeof obj.payload.data === 'string') {
+            content = obj.payload.data;
+          } else if (obj.message && typeof obj.message === 'string') {
+            content = obj.message;
+          }
+
+          if (content && content.trim()) {
+            state.lastAgentContent = content;
+          }
+
+          // Confirm alerts for Codex are triggered only by explicit interactive prompts
+          // (request_user_input), not by text output.
         }
       }
     }
+
+    follower.attach(
+      filePath,
+      (obj, meta) => {
+        void processObject(obj, meta);
+      },
+      { emitSeed: false }
+    );
+    logger(`[watch][codex] following ${filePath}`);
+
+    let seedPrimed = false;
+    let seedPriming = null;
+
+    async function primeFromSeedWindow(windowMs) {
+      if (!windowMs || windowMs <= 0) return;
+      const stat = safeStat(filePath);
+      if (!stat || stat.size <= 0) return;
+
+      const start = Math.max(0, stat.size - follower.seedBytes);
+      const seedText = readFileSliceUtf8(filePath, start, stat.size - start);
+      let lines = seedText.split(/\r?\n/);
+      if (start > 0) lines = lines.slice(1);
+
+      const objects = [];
+      for (const line of lines) {
+        if (!line) continue;
+        const obj = safeJsonParse(line);
+        if (obj) objects.push(obj);
+      }
+
+      // Pass 1: update state without sending notifications.
+      for (const obj of objects) {
+        await processObject(obj, { seed: true });
+      }
+
+      // Pass 2: treat recent seed lines as "live" to avoid missing quick turns.
+      const since = Date.now() - Math.max(0, Number(windowMs));
+      for (const obj of objects) {
+        const ts = parseTimestamp(obj && obj.timestamp);
+        if (ts != null && ts < since) continue;
+        await processObject(obj, { seed: false });
+      }
+    }
+
+    async function ensureSeedPrimed(windowMs) {
+      if (seedPrimed) return;
+      if (!seedPriming) {
+        seedPriming = (async () => {
+          try {
+            await primeFromSeedWindow(windowMs);
+          } catch (_error) {
+            // ignore
+          } finally {
+            seedPrimed = true;
+          }
+        })();
+      }
+      await seedPriming;
+    }
+
+    return {
+      filePath,
+      poll: async ({ seedCatchupMs } = {}) => {
+        await ensureSeedPrimed(seedCatchupMs);
+        follower.poll((obj, meta) => {
+          void processObject(obj, meta);
+        });
+      },
+      stop: () => {
+        clearPendingCompletion();
+      },
+      state
+    };
   }
+
+  const sessions = new Map();
+  const state = {
+    tickRunning: false
+  };
 
   async function tick() {
     if (state.tickRunning) return;
     state.tickRunning = true;
     try {
       if (!fs.existsSync(root)) return;
-      const preferredCwd = state.lastCwd || process.cwd();
-      const latest = findPreferredSessionFile(preferredCwd);
-      if (!latest) return;
 
-      const now = Date.now();
-      const attachedAt = state.attachedAt || 0;
-      const lastEventAt = state.lastEventAt || 0;
-      const idleSince = Math.max(attachedAt, lastEventAt);
-      const idleMs = idleSince > 0 ? now - idleSince : Number.POSITIVE_INFINITY;
-      const shouldSwitch = !state.currentFile || latest.path === state.currentFile || idleMs >= switchIdleMs;
+      const latest = findLatestFiles(root, (_full, name) => name.toLowerCase().endsWith('.jsonl'), followTopN);
+      if (!latest || latest.length === 0) return;
 
-      if (latest.path !== state.currentFile && !shouldSwitch) {
-        follower.poll((obj, meta) => {
-          void processObject(obj, meta);
-        });
-        return;
+      const wanted = new Set(latest.map((x) => x.path));
+      for (const filePath of wanted) {
+        if (!sessions.has(filePath)) {
+          sessions.set(filePath, createSession(filePath));
+        }
       }
 
-      if (latest.path !== state.currentFile) {
-        state.currentFile = latest.path;
-        state.attachedAt = now;
-        state.lastEventAt = now;
-        state.lastConfirmKey = '';
-        state.confirmNotifiedForTurn = false;
-        clearPendingCompletion();
-        follower.attach(latest.path, (obj, meta) => {
-          void processObject(obj, meta);
-        });
-        logger(`[watch][codex] following ${latest.path}`);
+      // Poll wanted sessions; drop others to keep memory bounded.
+      for (const [filePath, session] of sessions.entries()) {
+        if (!wanted.has(filePath)) {
+          try {
+            if (session && typeof session.stop === 'function') session.stop();
+          } finally {
+            sessions.delete(filePath);
+          }
+          continue;
+        }
+        try {
+          await session.poll({ seedCatchupMs });
+        } catch (_error) {
+          // ignore
+        }
       }
-      follower.poll((obj, meta) => {
-        void processObject(obj, meta);
-      });
     } finally {
       state.tickRunning = false;
     }
@@ -902,7 +1416,13 @@ function startCodexWatch({ intervalMs, log, confirmDetector }) {
   const timer = setInterval(tick, Math.max(500, intervalMs || 1000));
   return () => {
     clearInterval(timer);
-    clearPendingCompletion();
+    for (const session of sessions.values()) {
+      try {
+        if (session && typeof session.stop === 'function') session.stop();
+      } catch (_error) {
+        // ignore
+      }
+    }
   };
 }
 
@@ -1139,7 +1659,7 @@ function normalizeSources(input) {
 function startWatch({ sources, intervalMs, geminiQuietMs, claudeQuietMs, log, confirmAlert }) {
   const normalizedSources = normalizeSources(sources);
   const stops = [];
-  const confirmDetector = createConfirmDetector(confirmAlert || {});
+  const confirmDetector = createConfirmDetectorDynamic(confirmAlert || {});
 
   if (normalizedSources.includes('claude')) {
     stops.push(startClaudeWatch({ intervalMs, quietPeriodMs: geminiQuietMs, claudeQuietMs, log, confirmDetector }));

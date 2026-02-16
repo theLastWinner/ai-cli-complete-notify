@@ -238,16 +238,6 @@
               <div class="hint" data-i18n="watch.confirmUsageHint">
                 开启建议：AI 经常会向你请求“确认/授权/是否继续”时。关闭建议：只想收到“任务完成提醒”，不想被中间输出打断。
               </div>
-              <div class="watchRow" id="watchConfirmKeywordsRow">
-                <label data-i18n="watch.confirmKeywords">确认关键词（可选）</label>
-                <span class="hintIcon" data-i18n-title="watch.confirmKeywordsHint" title="">?</span>
-                <input
-                  id="watchConfirmKeywords"
-                  type="text"
-                  data-i18n-placeholder="watch.confirmKeywordsPlaceholder"
-                  placeholder="是否,确认,allow,approve"
-                />
-              </div>
               <div class="watchRow">
                 <button id="watchStartBtn" data-i18n="btn.watchStart">开始监听</button>
                 <button id="watchStopBtn" class="ghost" data-i18n="btn.watchStop">停止</button>
@@ -333,6 +323,10 @@
             <div class="row">
               <label data-i18n="summary.apiUrl">API URL</label>
               <input id="summaryApiUrl" type="text" placeholder="https://open.bigmodel.cn/api/paas/v4/chat/completions" />
+            </div>
+            <div class="summaryApiUrlPreviewRow">
+              <div id="summaryApiUrlResolved" class="hint summaryApiUrlResolved"></div>
+              <div id="summaryApiUrlRule" class="hint summaryApiUrlRule" data-i18n="summary.apiUrlRuleText">/ 结尾忽略 v1 版本，# 结尾强制使用输入地址</div>
             </div>
             <div id="summaryApiUrlExample" class="hint"></div>
             <div class="row">

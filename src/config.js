@@ -84,14 +84,30 @@ function normalizeConfig(rawConfig) {
 function loadRawConfig() {
   try {
     if (fs.existsSync(SETTINGS_PATH)) {
-      const content = fs.readFileSync(SETTINGS_PATH, 'utf8');
+      // Be tolerant of UTF-8 BOM and Windows editors that may write UTF-16.
+      const buf = fs.readFileSync(SETTINGS_PATH);
+      if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+        const content = buf.slice(2).toString('utf16le').replace(/^\uFEFF/, '');
+        return JSON.parse(content);
+      }
+      if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+        const swapped = Buffer.alloc(Math.max(0, buf.length - 2));
+        for (let i = 2; i + 1 < buf.length; i += 2) {
+          swapped[i - 2] = buf[i + 1];
+          swapped[i - 1] = buf[i];
+        }
+        const content = swapped.toString('utf16le').replace(/^\uFEFF/, '');
+        return JSON.parse(content);
+      }
+
+      const content = buf.toString('utf8').replace(/^\uFEFF/, '');
       return JSON.parse(content);
     }
 
     // 兼容：旧版本可能在项目根目录有 config.json
     const legacyPath = path.join(__dirname, '..', 'config.json');
     if (!fs.existsSync(legacyPath)) return null;
-    const content = fs.readFileSync(legacyPath, 'utf8');
+    const content = fs.readFileSync(legacyPath, 'utf8').replace(/^\uFEFF/, '');
     return JSON.parse(content);
   } catch (error) {
     return null;

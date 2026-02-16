@@ -7,25 +7,32 @@ const DEFAULT_PROVIDER = 'openai';
 
 const PROVIDER_DEFAULTS = {
   openai: {
-    apiUrl: 'https://api.openai.com/v1/chat/completions',
+    apiUrl: 'https://api.openai.com',
     model: 'gpt-4o-mini'
   },
   anthropic: {
-    apiUrl: 'https://api.anthropic.com/v1/messages',
+    apiUrl: 'https://api.anthropic.com',
     model: 'claude-3-haiku-20240307'
   },
   google: {
-    apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+    apiUrl: 'https://generativelanguage.googleapis.com',
     model: 'gemini-1.5-flash'
   },
   qwen: {
-    apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+    apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode',
     model: 'qwen-turbo'
   },
   deepseek: {
-    apiUrl: 'https://api.deepseek.com/v1/chat/completions',
+    apiUrl: 'https://api.deepseek.com',
     model: 'deepseek-chat'
   }
+};
+const PROVIDER_SUFFIX_TEMPLATES = {
+  openai: '/v1/chat/completions',
+  anthropic: '/v1/messages',
+  google: '/v1beta/models/{model}:generateContent',
+  qwen: '/compatible-mode/v1/chat/completions',
+  deepseek: '/v1/chat/completions'
 };
 
 function parseEnvBoolean(value) {
@@ -84,6 +91,91 @@ function getProviderDefaults(provider) {
   return PROVIDER_DEFAULTS[normalized] || PROVIDER_DEFAULTS[DEFAULT_PROVIDER];
 }
 
+function trimTrailingSlash(value) {
+  return String(value || '').trim().replace(/\/$/, '');
+}
+
+function getProviderUrlSuffix(provider, model) {
+  const normalized = normalizeProvider(provider) || DEFAULT_PROVIDER;
+  const template = PROVIDER_SUFFIX_TEMPLATES[normalized] || PROVIDER_SUFFIX_TEMPLATES[DEFAULT_PROVIDER];
+  const safeModel = String(model || '').trim() || getProviderDefaults(normalized).model;
+  return template.includes('{model}') ? template.replace(/\{model\}/g, safeModel) : template;
+}
+
+function extractUrlPath(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  try {
+    return String(new URL(raw).pathname || '').toLowerCase();
+  } catch (_error) {
+    const noQuery = raw.split('?')[0].split('#')[0];
+    const lower = noQuery.toLowerCase();
+    const protoIdx = lower.indexOf('://');
+    if (protoIdx >= 0) {
+      const pathIdx = lower.indexOf('/', protoIdx + 3);
+      return pathIdx >= 0 ? lower.slice(pathIdx) : '/';
+    }
+    return lower;
+  }
+}
+
+function isProviderApiUrlAlreadyEndpoint(provider, url) {
+  const normalized = normalizeProvider(provider) || DEFAULT_PROVIDER;
+  const path = extractUrlPath(url);
+  if (!path) return false;
+
+  if (normalized === 'google') {
+    return /\/v\d+(?:beta\d+)?\/models\/[^/]+:generatecontent$/i.test(path)
+      || /\/models\/[^/]+:generatecontent$/i.test(path);
+  }
+  if (normalized === 'anthropic') {
+    return /\/v\d+(?:beta\d+)?\/messages$/i.test(path) || /\/messages$/i.test(path);
+  }
+  if (normalized === 'qwen') {
+    return /\/compatible-mode\/v\d+(?:beta\d+)?\/chat\/completions$/i.test(path)
+      || /\/v\d+(?:beta\d+)?\/chat\/completions$/i.test(path)
+      || /\/chat\/completions$/i.test(path);
+  }
+  return /\/v\d+(?:beta\d+)?\/chat\/completions$/i.test(path) || /\/chat\/completions$/i.test(path);
+}
+
+function buildProviderApiUrl(provider, baseInput, model) {
+  const normalized = normalizeProvider(provider) || DEFAULT_PROVIDER;
+  const defaults = getProviderDefaults(normalized);
+  const rawInput = String(baseInput || '').trim();
+  const source = rawInput || defaults.apiUrl;
+
+  const forceUseRaw = source.endsWith('#');
+  const ignoreVersionSuffix = source.endsWith('/');
+
+  let base = source;
+  if (forceUseRaw) {
+    base = base.slice(0, -1);
+  }
+  if (!forceUseRaw) {
+    base = trimTrailingSlash(base);
+  }
+  if (!base) base = defaults.apiUrl;
+
+  const suffix = getProviderUrlSuffix(normalized, model);
+  const finalUrl = forceUseRaw
+    ? base
+    : ignoreVersionSuffix
+      ? base
+      : isProviderApiUrlAlreadyEndpoint(normalized, base)
+        ? base
+        : `${base}${suffix}`;
+
+  return {
+    provider: normalized,
+    base,
+    finalUrl,
+    forceUseRaw,
+    ignoreVersionSuffix,
+    suffix
+  };
+}
+
 function resolveGoogleApiUrl(apiUrl, model) {
   const raw = String(apiUrl || '').trim();
   const safeModel = String(model || '').trim();
@@ -118,9 +210,10 @@ function normalizeSummaryConfig(config) {
   provider = provider || DEFAULT_PROVIDER;
   const defaults = getProviderDefaults(provider);
 
-  const apiUrl = coalesce(process.env.SUMMARY_API_URL, summary.apiUrl, defaults.apiUrl);
+  const rawApiUrl = coalesce(process.env.SUMMARY_API_URL, summary.apiUrl, defaults.apiUrl);
   const apiKey = coalesce(process.env.SUMMARY_API_KEY, summary.apiKey);
   const model = coalesce(process.env.SUMMARY_MODEL, summary.model, defaults.model);
+  const resolvedApi = buildProviderApiUrl(provider, rawApiUrl, model);
   const timeoutCandidate = parseEnvNumber(process.env.SUMMARY_TIMEOUT_MS) ?? summary.timeoutMs;
   const timeoutNumber = Number(timeoutCandidate);
   let timeoutMs = Number.isFinite(timeoutNumber) ? timeoutNumber : DEFAULT_TIMEOUT_MS;
@@ -131,7 +224,8 @@ function normalizeSummaryConfig(config) {
   return {
     enabled,
     provider,
-    apiUrl,
+    apiUrl: rawApiUrl,
+    resolvedApiUrl: resolvedApi.finalUrl,
     apiKey,
     model,
     timeoutMs,
@@ -337,10 +431,11 @@ function buildGooglePayload({ systemPrompt, userContent, maxTokens }) {
 function buildRequest(summaryConfig, userContent, systemPrompt) {
   const provider = normalizeProvider(summaryConfig.provider) || DEFAULT_PROVIDER;
   const maxTokens = summaryConfig.maxTokens;
+  const requestUrl = String(summaryConfig.resolvedApiUrl || summaryConfig.apiUrl || '').trim();
 
   if (provider === 'anthropic') {
     return {
-      url: summaryConfig.apiUrl,
+      url: requestUrl,
       payload: buildAnthropicPayload({
         model: summaryConfig.model,
         systemPrompt,
@@ -356,7 +451,7 @@ function buildRequest(summaryConfig, userContent, systemPrompt) {
 
   if (provider === 'google') {
     return {
-      url: resolveGoogleApiUrl(summaryConfig.apiUrl, summaryConfig.model),
+      url: requestUrl,
       payload: buildGooglePayload({ systemPrompt, userContent, maxTokens }),
       headers: summaryConfig.apiKey ? { 'x-goog-api-key': summaryConfig.apiKey } : {}
     };
@@ -364,7 +459,7 @@ function buildRequest(summaryConfig, userContent, systemPrompt) {
 
   if (isOpenAIProvider(provider)) {
     return {
-      url: summaryConfig.apiUrl,
+      url: requestUrl,
       payload: buildOpenAIPayload({
         model: summaryConfig.model,
         systemPrompt,
@@ -378,7 +473,7 @@ function buildRequest(summaryConfig, userContent, systemPrompt) {
   }
 
   return {
-    url: summaryConfig.apiUrl,
+    url: requestUrl,
     payload: buildOpenAIPayload({
       model: summaryConfig.model,
       systemPrompt,

@@ -10,8 +10,7 @@
   "ui": {
     "silentStart": false,
     "confirmAlert": {
-      "enabled": false,
-      "keywords": ""
+      "enabled": false
     }
   },
   "channels": {

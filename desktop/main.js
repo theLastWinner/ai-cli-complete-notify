@@ -346,8 +346,10 @@ function saveCloseBehavior(behavior) {
 function startDefaultWatch(win) {
   if (watchStop) return;
   try {
-    const cfg = loadConfig();
-    const confirmAlert = cfg && cfg.ui ? cfg.ui.confirmAlert : null;
+    const confirmAlert = () => {
+      const cfg = loadConfig();
+      return cfg && cfg.ui ? cfg.ui.confirmAlert : null;
+    };
     watchStop = startWatch({
       sources: 'all',
       intervalMs: 1000,
@@ -803,8 +805,10 @@ function setupIpc(win) {
     const intervalMs = payload && Number.isFinite(Number(payload.intervalMs)) ? Number(payload.intervalMs) : 1000;
     const geminiQuietMs = payload && Number.isFinite(Number(payload.geminiQuietMs)) ? Number(payload.geminiQuietMs) : 3000;
     const claudeQuietMs = payload && Number.isFinite(Number(payload.claudeQuietMs)) ? Number(payload.claudeQuietMs) : 60000;
-    const cfg = loadConfig();
-    const confirmAlert = cfg && cfg.ui ? cfg.ui.confirmAlert : null;
+    const confirmAlert = () => {
+      const cfg = loadConfig();
+      return cfg && cfg.ui ? cfg.ui.confirmAlert : null;
+    };
 
     watchStop = startWatch({
       sources,

@@ -2,9 +2,9 @@
 
 <img width="128" src="https://github.com/ZekerTop/ai-cli-complete-notify/blob/main/desktop/assets/tray.png?raw=true">
 
-# AI CLI Complete Notify (v1.5.0)
+# AI CLI Complete Notify (v1.5.2)
 
-![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.5.2-blue.svg)
 ![License](https://img.shields.io/badge/license-ISC-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20WSL-lightgrey.svg)
 
@@ -87,7 +87,7 @@ npm run dev
 - **通道配置**：配置 Webhook、Telegram、邮件等通知渠道
 - **来源设置**：为 Claude / Codex / Gemini 分别设置启用状态和耗时阈值
 - **监听配置**：设置轮询间隔和去抖时间，支持智能调整
-- **确认关键词（可选）**：仅在 Watch 监听生效，用于识别 AI 是否在向你请求确认/授权/继续执行。留空则使用内置关键词库；可用逗号分隔自定义（如：是否,确认,allow,approve）。
+- **确认提醒（默认关闭）**：仅在 Watch 监听生效。开启后，仅当 Codex 出现交互式选项框（需要你选择/提交，Plan 模式）时提醒；不会因普通输出文本触发。同一轮只提醒一次：触发“确认提醒”后本轮不再发送“任务完成提醒”。
 - **监听日志**：本地持久化，可一键打开，并支持保留天数设置。
 - **测试功能**：测试各通知渠道是否正常工作
 - **AI 摘要**：配置 API URL / Key / 模型 与超时回退
@@ -254,7 +254,7 @@ TELEGRAM_CHAT_ID=your_chat_id
 # AI 摘要（可选）
 # SUMMARY_ENABLED=false
 # SUMMARY_PROVIDER=openai    # 模型平台：openai | anthropic | google | qwen | deepseek
-# SUMMARY_API_URL=https://api.openai.com/v1/chat/completions
+# SUMMARY_API_URL=https://api.openai.com
 # SUMMARY_API_KEY=your_api_key
 # SUMMARY_MODEL=gpt-4o-mini
 # SUMMARY_TIMEOUT_MS=15000
@@ -310,24 +310,33 @@ npm run dist:portable
 - 🎯 **智能去抖**会根据 AI 消息类型自动调整等待时间，提升提醒准确性
 - 💡 **监听模式**适合长时间运行，建议设置开机自启或在后台终端中保持运行
 - 💡 **EXE 启动默认开启 Watch 监听**：如不需要可在顶部开关关闭。
-- ✅ **确认提醒开关建议（默认关闭）**：当 AI 经常问你“是否继续/是否授权/请确认”时建议开启；如果你只想收到“任务完成提醒”，建议保持关闭，避免中间输出触发提醒。
+- ✅ **确认提醒开关建议（默认关闭）**：当 AI 经常问你“是否继续/是否授权/请确认”时建议开启；如果你只想收到“任务完成提醒”，建议保持关闭，避免中间输出触发提醒。注意：若你在 `.env` 里设置了 `CODEX_COMPLETION_ONLY=1`，Codex 的确认提醒会被禁用（需改为 `0` 或删除该项）。
 - 🧭 **点击切回**更可靠，但仍受系统焦点限制；若是 VSCode 插件场景，建议选择 VSCode 目标，并确保 VSCode 未最小化/未被专注助手拦截
 
 ## 版本更新
 
+- 1.5.2：
+  - 修复 Codex 提醒链路一致性：交互询问触发确认提醒，任务真正完成触发完成提醒
+  - 固化确认提醒文案来源：有选项优先显示选项；无选项时显示当前 AI 询问/输出
+  - 修复交互边界上的文案复用问题，避免完成提醒误用上一条确认提醒内容
+- 1.5.1：
+  - AI 摘要 API URL 输入改为基础地址，自动拼接各模型平台对应后缀
+  - 新增 API URL 实时拼接预览（输入框下方显示最终请求地址）
+  - 新增 URL 规则：`/` 结尾忽略版本后缀，`#` 结尾强制使用输入地址
+  - 兼容已填写完整 endpoint 的历史配置，避免重复拼接
+  - Codex 完成提醒改为优先以 `task_complete` 事件触发（更即时，修复 `gpt-5.3-codex` phase 为空导致的延迟/漏提醒）
 - 1.5.0：
   - 强化 Codex 完成判定（挂起状态 + token_count 缓冲），降低未完成提前提醒
   - 增加 Codex 严格完成模式（默认 `CODEX_STRICT_FINAL_ANSWER=1`）：仅 `final_answer` 触发完成提醒
   - 增加下一轮用户消息前兜底补发，降低漏提醒
   - 新增 Codex 会话锁定 + 空闲切换机制，避免在历史 session 间来回切换导致误提醒
   - 新增 Codex 仅完成提醒模式（默认 `CODEX_COMPLETION_ONLY=1`），避免确认提醒干扰完成提醒
-  - 新增 phase 为空时的安静窗口兜底（`CODEX_EMPTY_PHASE_QUIET_MS`），降低“已完成却未提醒”
   - 确认提醒默认关闭（`confirmAlert.enabled=false`），并同步到示例配置与界面提示
   - 托盘恢复体验优化：抑制退出选项框闪现，窗口恢复更平滑
   - 启动白屏优化：增加启动页与深色预绘制背景
   - 托盘图标几何与边缘质感优化
 - 1.4.3：
-  - Watch 模式确认提醒（支持自定义关键词）
+  - Watch 模式确认提醒（无需关键词：AI 提问/Plan 选项框即提醒）
   - 监听日志持久化 + 一键打开 + 保留天数设置
   - EXE 启动自动开启 Watch 监听
   - 修复 `gpt-5.3-codex` 任务未完成就提前提醒的问题（改为仅在任务真正完成后提醒）

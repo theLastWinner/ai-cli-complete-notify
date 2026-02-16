@@ -2,9 +2,9 @@
 
 <img width="128" src="https://github.com/ZekerTop/ai-cli-complete-notify/blob/main/desktop/assets/tray.png?raw=true">
 
-# AI CLI Complete Notify (v1.5.0)
+# AI CLI Complete Notify (v1.5.2)
 
-![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.5.2-blue.svg)
 ![License](https://img.shields.io/badge/license-ISC-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20WSL-lightgrey.svg)
 
@@ -252,7 +252,7 @@ TELEGRAM_CHAT_ID=your_chat_id
 # AI summary (optional)
 # SUMMARY_ENABLED=false
 # SUMMARY_PROVIDER=openai    # model platform: openai | anthropic | google | qwen | deepseek
-# SUMMARY_API_URL=https://api.openai.com/v1/chat/completions
+# SUMMARY_API_URL=https://api.openai.com
 # SUMMARY_API_KEY=your_api_key
 # SUMMARY_MODEL=gpt-4o-mini
 # SUMMARY_TIMEOUT_MS=15000
@@ -309,24 +309,33 @@ npm run dist:portable
 - 🎯 **Smart debouncing** automatically adjusts wait time based on AI message type, improving notification accuracy
 - 💡 **Monitoring mode** is suitable for long-term operation, recommend setting auto-start or keeping it running in a background terminal
 - 💡 **EXE starts with Watch enabled by default**: toggle it in the top bar if you don?t need it.
-- ✅ **Confirm prompt toggle guidance (default: OFF)**: turn it on if AI often asks “confirm/approve/continue”; keep it off if you only want final completion alerts without intermediate interruptions.
+- ✅ **Confirm prompt toggle guidance (default: OFF)**: turn it on if AI often asks “confirm/approve/continue”; keep it off if you only want final completion alerts without intermediate interruptions. Note: if you set `CODEX_COMPLETION_ONLY=1` in `.env`, Codex confirm alerts are disabled (set it to `0` or remove it).
 - 🧭 **Click to return** is more reliable but still best-effort due to OS focus rules; for VSCode extensions choose the VSCode target and ensure VSCode is not minimized
 
 ## Changelog
 
+- 1.5.2:
+  - Codex reminder flow consistency fix: keep confirm reminders for interaction prompts and completion reminders for true task completion
+  - Confirmation content source is now deterministic: show options when options exist; otherwise show the current AI question/output
+  - Prevent completion notification content from reusing previous confirmation prompt text across interaction boundaries
+- 1.5.1:
+  - AI Summary API URL now accepts base URL and auto-appends provider-specific endpoint suffixes
+  - Added real-time API URL preview under the input to show the final request URL
+  - Added URL rules: trailing `/` skips version suffix, trailing `#` forces exact input URL
+  - Kept backward compatibility for already-complete endpoint URLs to avoid duplicate suffixes
+  - Codex completion alert now prefers the explicit `task_complete` event (immediate; fixes delay/missed alerts when `gpt-5.3-codex` has empty phase)
 - 1.5.0:
   - Codex completion detection hardened with pending-state + token_count grace to reduce premature alerts
   - Added strict mode for Codex completion (`CODEX_STRICT_FINAL_ANSWER=1` by default): only `final_answer` triggers completion alerts
   - Added fallback flush before next user turn to reduce missed completion notifications
   - Added Codex session locking + idle switching guard to avoid cross-session reminder misfires
   - Added Codex completion-only mode (`CODEX_COMPLETION_ONLY=1` by default) to avoid confirm-alert interference
-  - Added quiet-window fallback for phase-empty Codex outputs (`CODEX_EMPTY_PHASE_QUIET_MS`) to reduce missed end-of-task reminders
   - Confirm alert is now default OFF (`confirmAlert.enabled=false`), aligned in sample config and UI guidance
   - Tray restore UX improved: suppress close-modal flicker and smooth window restore behavior
   - Startup flash mitigation via splash screen and dark prepaint background
   - Refined tray icon geometry and edge sharpness
 - 1.4.3:
-  - Confirm prompt alerts in Watch mode (custom keywords supported)
+  - Confirm prompt alerts in Watch mode (no keywords needed: questions/Plan-mode options trigger alerts)
   - Watch logs persisted + open log + retention days
   - Watch auto-start when EXE opens
   - Fix premature completion alerts for `gpt-5.3-codex` (now only notifies after task is truly finished)

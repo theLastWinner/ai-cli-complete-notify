@@ -27,8 +27,7 @@ const DEFAULT_CONFIG = {
     forceMaximizeOnFocus: false,
     focusTarget: 'auto', // auto | vscode | terminal
     confirmAlert: {
-      enabled: false,
-      keywords: ''
+      enabled: false
     }
   },
   channels: {

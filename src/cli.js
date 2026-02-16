@@ -61,8 +61,10 @@ async function runCli(argv) {
     const geminiQuietMs = toNumberOrNull(flags['gemini-quiet-ms']) || 3000;
     const claudeQuietMs = toNumberOrNull(flags['claude-quiet-ms']);
     const quiet = Boolean(flags.quiet);
-    const cfg = loadConfig();
-    const confirmAlert = cfg && cfg.ui ? cfg.ui.confirmAlert : null;
+    const confirmAlert = () => {
+      const cfg = loadConfig();
+      return cfg && cfg.ui ? cfg.ui.confirmAlert : null;
+    };
 
     const { startWatch } = require('./watch');
     const stop = startWatch({

@@ -74,6 +74,7 @@ const I18N = {
     'summary.provider.deepseek': "DeepSeek",
     'summary.apiUrl': "API URL",
     'summary.apiUrlExample': "\u793a\u4f8b",
+    'summary.apiUrlRuleText': "/ \u7ed3\u5c3e\u5ffd\u7565 v1 \u7248\u672c\uff0c# \u7ed3\u5c3e\u5f3a\u5236\u4f7f\u7528\u8f93\u5165\u5730\u5740",
     'summary.apiKey': "API Key",
     'summary.apiKeyToggle.show': "\u663e\u793a API Key",
     'summary.apiKeyToggle.hide': "\u9690\u85cf API Key",
@@ -144,10 +145,7 @@ const I18N = {
     'section.sound.title': "\u63d0\u793a\u97f3",
     'section.sound.sub': "\u8bed\u97f3\u64ad\u62a5\u4e0e\u63d0\u793a\u97f3\u8bbe\u7f6e\uff08\u652f\u6301\u81ea\u5b9a\u4e49 .wav\uff09",
     'watch.confirmEnabled': "\u786e\u8ba4\u63d0\u9192",
-    'watch.confirmUsageHint': "\u5f00\u542f\u5efa\u8bae\uff1aAI \u7ecf\u5e38\u4f1a\u5411\u4f60\u8bf7\u6c42\u201c\u786e\u8ba4/\u6388\u6743/\u662f\u5426\u7ee7\u7eed\u201d\u65f6\u3002\u5173\u95ed\u5efa\u8bae\uff1a\u53ea\u60f3\u6536\u5230\u201c\u4efb\u52a1\u5b8c\u6210\u63d0\u9192\u201d\uff0c\u4e0d\u60f3\u88ab\u4e2d\u95f4\u8f93\u51fa\u6253\u65ad\u3002",
-    'watch.confirmKeywords': "\u786e\u8ba4\u5173\u952e\u8bcd\uff08\u53ef\u9009\uff09",
-    'watch.confirmKeywordsPlaceholder': "\u662f\u5426,\u786e\u8ba4,allow,approve",
-    'watch.confirmKeywordsHint': "\u7528\u4e8e\u8bc6\u522b AI \u662f\u5426\u5728\u5411\u4f60\u8bf7\u6c42\u786e\u8ba4/\u6388\u6743/\u7ee7\u7eed\u6267\u884c\u3002\u7559\u7a7a\u4f7f\u7528\u5185\u7f6e\u5173\u952e\u8bcd\u5e93\uff1b\u53ef\u7528\u9017\u53f7\u5206\u9694\u81ea\u5b9a\u4e49\u3002",
+    'watch.confirmUsageHint': "\u5f00\u542f\u5efa\u8bae\uff1a\u5f53 Codex \u9700\u8981\u4f60\u4ea4\u4e92\u786e\u8ba4\u65f6\u63d0\u9192\uff08Plan \u9009\u9879\u6846/\u63d0\u4ea4\uff0c\u6216\u56de\u5408\u672b\u5c3e\u7684\u786e\u8ba4\u63d0\u95ee\uff09\uff0c\u4e0d\u4f1a\u56e0\u6d41\u5f0f\u8f93\u51fa\u7684\u666e\u901a\u6587\u672c\u89e6\u53d1\u3002\u5173\u95ed\u540e\uff1a\u4e0d\u4f1a\u63d0\u9192\u786e\u8ba4\uff0c\u4e14\u8fd9\u7c7b\u4ea4\u4e92\u56de\u5408\u4e0d\u4f1a\u88ab\u5f53\u4f5c\u201c\u4efb\u52a1\u5b8c\u6210\u201d\u3002",
     'advanced.autoFocus': "\u70b9\u51fb\u901a\u77e5\u5207\u56de\u5de5\u4f5c\u754c\u9762",
     'advanced.forceMaximize': "\u5207\u56de\u65f6\u5f3a\u5236\u6700\u5927\u5316\uff08WSL / \u7ec8\u7aef\u4e5f\u751f\u6548\uff09",
     'advanced.forceMaximizeHint': "\u4efb\u52a1\u6267\u884c\u4e2d\u6700\u5c0f\u5316\u540e\uff0c\u70b9\u51fb\u901a\u77e5\u4f1a\u6062\u590d\u4e3a\u6700\u5927\u5316\u7a97\u53e3\u3002",
@@ -232,6 +230,7 @@ const I18N = {
     'summary.provider.deepseek': "DeepSeek",
     'summary.apiUrl': "API URL",
     'summary.apiUrlExample': "Example",
+    'summary.apiUrlRuleText': "Trailing / ignores v1 suffix; trailing # forces exact input URL",
     'summary.apiKey': "API Key",
     'summary.apiKeyToggle.show': "Show API key",
     'summary.apiKeyToggle.hide': "Hide API key",
@@ -302,10 +301,7 @@ const I18N = {
     'section.sound.title': "Sound",
     'section.sound.sub': "TTS and custom sound settings (WAV supported)",
     'watch.confirmEnabled': "Confirm prompt alert",
-    'watch.confirmUsageHint': "Turn on when AI often asks for confirmation/approval. Turn off when you only want final completion alerts without intermediate interruptions.",
-    'watch.confirmKeywords': "Confirm keywords (optional)",
-    'watch.confirmKeywordsPlaceholder': "confirm,approve,allow,proceed",
-    'watch.confirmKeywordsHint': "Used to detect confirmation/approval prompts. Leave empty to use defaults; comma-separated custom keywords.",
+    'watch.confirmUsageHint': "Turn on to get alerted when Codex needs your input (Plan option prompt/submit, or a turn-ending confirm question). It won't trigger on streaming text. When disabled, confirm prompts won't notify and won't be treated as completion.",
     'advanced.autoFocus': "Click notification to return",
     'advanced.forceMaximize': "Force maximize on return (WSL / terminal too)",
     'advanced.forceMaximizeHint': "If minimized during the task, clicking the notification restores maximized.",
@@ -458,6 +454,12 @@ function applyLanguageToDom(config, opts = {}) {
   const summaryProvider = config && config.summary ? normalizeSummaryProvider(config.summary.provider) : 'openai';
   applySummaryProviderPlaceholders(summaryProvider);
   syncSummaryApiKeyToggle();
+  if ($('summaryApiUrlRule')) {
+    $('summaryApiUrlRule').textContent = t('summary.apiUrlRuleText');
+  }
+  if (config) {
+    updateSummaryApiUrlPreview(config);
+  }
 
   if (config) {
     renderGlobalChannels(config, onGlobalChange);
@@ -685,26 +687,40 @@ function renderSources(config, onChange) {
 
 const SUMMARY_PROVIDER_DEFAULTS = {
   openai: {
-    apiUrl: 'https://api.openai.com/v1/chat/completions',
+    apiUrl: 'https://api.openai.com',
     model: 'gpt-4o-mini'
   },
   anthropic: {
-    apiUrl: 'https://api.anthropic.com/v1/messages',
+    apiUrl: 'https://api.anthropic.com',
     model: 'claude-3-haiku-20240307'
   },
   google: {
-    apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+    apiUrl: 'https://generativelanguage.googleapis.com',
     model: 'gemini-1.5-flash'
   },
   qwen: {
-    apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+    apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode',
     model: 'qwen-turbo'
   },
   deepseek: {
-    apiUrl: 'https://api.deepseek.com/v1/chat/completions',
+    apiUrl: 'https://api.deepseek.com',
     model: 'deepseek-chat'
   }
 };
+const SUMMARY_PROVIDER_SUFFIX_TEMPLATES = {
+  openai: '/v1/chat/completions',
+  anthropic: '/v1/messages',
+  google: '/v1beta/models/{model}:generateContent',
+  qwen: '/compatible-mode/v1/chat/completions',
+  deepseek: '/v1/chat/completions'
+};
+const SUMMARY_PROVIDER_LEGACY_API_URLS = [
+  'https://api.openai.com/v1/chat/completions',
+  'https://api.anthropic.com/v1/messages',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+  'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+  'https://api.deepseek.com/v1/chat/completions'
+];
 const SUMMARY_LEGACY_DEFAULTS = {
   apiUrls: [
     'https://open.bigmodel.cn/api/paas/v4/chat/completions'
@@ -747,11 +763,101 @@ function normalizeUrlString(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
+function trimOneTrailingSlash(value) {
+  return String(value || '').trim().replace(/\/$/, '');
+}
+
+function getSummaryApiUrlSuffix(provider, model) {
+  const normalizedProvider = normalizeSummaryProvider(provider);
+  const template = SUMMARY_PROVIDER_SUFFIX_TEMPLATES[normalizedProvider] || SUMMARY_PROVIDER_SUFFIX_TEMPLATES.openai;
+  const safeModel = String(model || '').trim();
+  if (template.includes('{model}')) {
+    const fallbackModel = getSummaryProviderDefaults(normalizedProvider).model;
+    return template.replace(/\{model\}/g, safeModel || fallbackModel);
+  }
+  return template;
+}
+
+function extractUrlPath(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  try {
+    return String(new URL(raw).pathname || '').toLowerCase();
+  } catch (_error) {
+    const noQuery = raw.split('?')[0].split('#')[0];
+    const lower = noQuery.toLowerCase();
+    const protoIdx = lower.indexOf('://');
+    if (protoIdx >= 0) {
+      const pathIdx = lower.indexOf('/', protoIdx + 3);
+      return pathIdx >= 0 ? lower.slice(pathIdx) : '/';
+    }
+    return lower;
+  }
+}
+
+function isSummaryApiUrlAlreadyEndpoint(provider, url) {
+  const normalizedProvider = normalizeSummaryProvider(provider);
+  const path = extractUrlPath(url);
+  if (!path) return false;
+
+  if (normalizedProvider === 'google') {
+    return /\/v\d+(?:beta\d+)?\/models\/[^/]+:generatecontent$/i.test(path)
+      || /\/models\/[^/]+:generatecontent$/i.test(path);
+  }
+  if (normalizedProvider === 'anthropic') {
+    return /\/v\d+(?:beta\d+)?\/messages$/i.test(path) || /\/messages$/i.test(path);
+  }
+  if (normalizedProvider === 'qwen') {
+    return /\/compatible-mode\/v\d+(?:beta\d+)?\/chat\/completions$/i.test(path)
+      || /\/v\d+(?:beta\d+)?\/chat\/completions$/i.test(path)
+      || /\/chat\/completions$/i.test(path);
+  }
+  return /\/v\d+(?:beta\d+)?\/chat\/completions$/i.test(path) || /\/chat\/completions$/i.test(path);
+}
+
+function buildSummaryApiUrl(provider, baseInput, model) {
+  const normalizedProvider = normalizeSummaryProvider(provider);
+  const raw = String(baseInput || '').trim();
+  const fallbackBase = getSummaryProviderDefaults(normalizedProvider).apiUrl;
+  const source = raw || fallbackBase;
+
+  const forceUseRaw = source.endsWith('#');
+  const ignoreV1Suffix = source.endsWith('/');
+
+  let base = source;
+  if (forceUseRaw) base = base.slice(0, -1);
+
+  if (!forceUseRaw) {
+    base = trimOneTrailingSlash(base);
+  }
+
+  if (!base) base = fallbackBase;
+
+  const suffix = getSummaryApiUrlSuffix(normalizedProvider, model);
+  const finalUrl = forceUseRaw
+    ? base
+    : ignoreV1Suffix
+      ? base
+      : isSummaryApiUrlAlreadyEndpoint(normalizedProvider, base)
+        ? base
+        : `${base}${suffix}`;
+
+  return {
+    baseInput: raw,
+    normalizedBase: base,
+    finalUrl,
+    forceUseRaw,
+    ignoreV1Suffix,
+    suffix
+  };
+}
+
 function isSummaryDefaultUrl(value) {
   if (!value) return true;
   const raw = normalizeUrlString(value);
   if (!raw) return true;
   if (SUMMARY_LEGACY_DEFAULTS.apiUrls.map(normalizeUrlString).includes(raw)) return true;
+  if (SUMMARY_PROVIDER_LEGACY_API_URLS.map(normalizeUrlString).includes(raw)) return true;
   return Object.values(SUMMARY_PROVIDER_DEFAULTS).some((item) => normalizeUrlString(item.apiUrl) === raw);
 }
 
@@ -778,8 +884,24 @@ function applySummaryProviderPlaceholders(provider) {
   if ($('summaryApiUrl')) $('summaryApiUrl').placeholder = defaults.apiUrl;
   if ($('summaryModel')) $('summaryModel').placeholder = defaults.model;
   if ($('summaryApiUrlExample')) {
-    $('summaryApiUrlExample').textContent = `${t('summary.apiUrlExample')}: ${defaults.apiUrl}`;
+    const sample = buildSummaryApiUrl(provider, defaults.apiUrl, defaults.model);
+    const exampleLabel = t('summary.apiUrlExample');
+    $('summaryApiUrlExample').textContent = `${exampleLabel}: ${defaults.apiUrl} -> ${sample.finalUrl}`;
   }
+}
+
+function updateSummaryApiUrlPreview(config) {
+  const preview = $('summaryApiUrlResolved');
+  const input = $('summaryApiUrl');
+  if (!preview || !input) return;
+
+  const summary = ensureSummaryConfig(config);
+  const provider = normalizeSummaryProvider(summary.provider);
+  const modelInput = $('summaryModel');
+  const modelValue = String(modelInput?.value || summary.model || '').trim();
+  const result = buildSummaryApiUrl(provider, input.value, modelValue);
+
+  preview.textContent = result.finalUrl || '';
 }
 
 function normalizeSummaryTestDetail(detail) {
@@ -867,6 +989,7 @@ function applySummaryValues(config) {
   $('summaryModel').value = summary.model || '';
   $('summaryTimeoutMs').value = String(summary.timeoutMs ?? 15000);
   applySummaryProviderPlaceholders(summary.provider);
+  updateSummaryApiUrlPreview(config);
 }
 
 function setSummaryVisibility(enabled) {
@@ -923,19 +1046,14 @@ function ensureConfirmAlertConfig(config) {
   if (!config.ui || typeof config.ui !== 'object') config.ui = {};
   if (!config.ui.confirmAlert || typeof config.ui.confirmAlert !== 'object') config.ui.confirmAlert = {};
   if (typeof config.ui.confirmAlert.enabled !== 'boolean') config.ui.confirmAlert.enabled = false;
-  if (typeof config.ui.confirmAlert.keywords !== 'string') config.ui.confirmAlert.keywords = '';
   return config.ui.confirmAlert;
 }
 
 function applyConfirmAlertValues(config) {
   const toggle = $('watchConfirmEnabled');
-  const input = $('watchConfirmKeywords');
-  const row = $('watchConfirmKeywordsRow');
-  if (!toggle && !input) return;
+  if (!toggle) return;
   const confirmAlert = ensureConfirmAlertConfig(config || {});
   if (toggle) toggle.checked = Boolean(confirmAlert.enabled);
-  if (input) input.value = confirmAlert.keywords || '';
-  if (row) row.classList.toggle('isHidden', !confirmAlert.enabled);
 }
 
 function applyWebhookCardToggle(config) {
@@ -1386,6 +1504,7 @@ async function main() {
         if (nextProvider === normalizeSummaryProvider(summary.provider)) return;
         updateSummaryProviderDefaults(summary, nextProvider);
         applySummaryValues(config);
+        updateSummaryApiUrlPreview(config);
         triggerAutoSave();
         clearSummaryTestResult();
       });
@@ -1393,6 +1512,7 @@ async function main() {
     $('summaryApiUrl').addEventListener('input', () => {
       const summary = ensureSummaryConfig(config);
       summary.apiUrl = String($('summaryApiUrl').value || '').trim();
+      updateSummaryApiUrlPreview(config);
       triggerAutoSave();
       clearSummaryTestResult();
     });
@@ -1405,6 +1525,7 @@ async function main() {
     $('summaryModel').addEventListener('input', () => {
       const summary = ensureSummaryConfig(config);
       summary.model = String($('summaryModel').value || '').trim();
+      updateSummaryApiUrlPreview(config);
       triggerAutoSave();
       clearSummaryTestResult();
     });
@@ -1433,13 +1554,13 @@ async function main() {
         }
 
         const provider = normalizeSummaryProvider($('summaryProvider')?.value);
-        const apiUrl = String($('summaryApiUrl')?.value || '').trim();
+        const apiUrlRaw = String($('summaryApiUrl')?.value || '').trim();
         const apiKey = String($('summaryApiKey')?.value || '').trim();
         const model = String($('summaryModel')?.value || '').trim();
         const timeoutRaw = Number($('summaryTimeoutMs')?.value || 15000);
         const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw >= 200 ? timeoutRaw : 15000;
 
-        if (!apiUrl) {
+        if (!apiUrlRaw) {
           setSummaryTestResult('summary.test.fail', t('summary.test.missingApiUrl'));
           return;
         }
@@ -1447,6 +1568,9 @@ async function main() {
           setSummaryTestResult('summary.test.fail', t('summary.test.missingModel'));
           return;
         }
+        const built = buildSummaryApiUrl(provider, apiUrlRaw, model);
+        const apiUrl = built.finalUrl;
+
         if (provider === 'google') {
           if (!apiKey && !hasApiKeyInUrl(apiUrl)) {
             setSummaryTestResult('summary.test.fail', t('summary.test.missingApiKey'));
@@ -1459,11 +1583,12 @@ async function main() {
 
         const summary = ensureSummaryConfig(config);
         summary.provider = provider;
-        summary.apiUrl = apiUrl;
+        summary.apiUrl = apiUrlRaw;
         summary.apiKey = apiKey;
         summary.model = model;
         summary.timeoutMs = timeoutMs;
         triggerAutoSave();
+        updateSummaryApiUrlPreview(config);
 
         const isEnglish = currentLanguage === 'en';
         const payload = {
@@ -1527,13 +1652,6 @@ async function main() {
       const confirmAlert = ensureConfirmAlertConfig(config);
       confirmAlert.enabled = Boolean($('watchConfirmEnabled').checked);
       applyConfirmAlertValues(config);
-      triggerAutoSave();
-    });
-  }
-  if ($('watchConfirmKeywords')) {
-    $('watchConfirmKeywords').addEventListener('input', () => {
-      const confirmAlert = ensureConfirmAlertConfig(config);
-      confirmAlert.keywords = String($('watchConfirmKeywords').value || '').trim();
       triggerAutoSave();
     });
   }
