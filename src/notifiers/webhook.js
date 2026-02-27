@@ -6,6 +6,94 @@ const { exec } = require('child_process');
 
 const REQUEST_TIMEOUT_MS = 10000;
 
+// Webhook类型检测
+const WEBHOOK_TYPES = {
+  FEISHU: 'feishu',
+  WEWORK: 'wework',     // 企业微信
+  DINGTALK: 'dingtalk'  // 钉钉
+};
+
+/**
+ * 根据URL检测webhook类型
+ * @param {string} url webhook URL
+ * @returns {string} webhook类型
+ */
+function detectWebhookType(url) {
+  try {
+    const u = new URL(url);
+    const hostname = u.hostname.toLowerCase();
+    
+    if (hostname.includes('qyapi.weixin.qq.com')) {
+      return WEBHOOK_TYPES.WEWORK;
+    }
+    if (hostname.includes('open.feishu.cn') || hostname.includes('feishu.cn')) {
+      return WEBHOOK_TYPES.FEISHU;
+    }
+    if (hostname.includes('oapi.dingtalk.com') || hostname.includes('dingtalk.com')) {
+      return WEBHOOK_TYPES.DINGTALK;
+    }
+  } catch (e) {
+    // URL解析失败，默认飞书
+  }
+  return WEBHOOK_TYPES.FEISHU; // 默认飞书
+}
+
+/**
+ * 构建企业微信消息payload (markdown格式)
+ */
+function buildWeworkPayload({ title, contentText, projectName, timestamp, durationText, sourceLabel, taskInfo, outputContent, summaryUsed }) {
+  const lines = [];
+  
+  // 标题
+  lines.push(`## ${title}`);
+  lines.push('');
+  
+  // 项目信息
+  if (projectName) {
+    lines.push(`**项目**: ${projectName}`);
+  }
+  
+  // 时间信息
+  if (timestamp) {
+    lines.push(`**完成时间**: ${timestamp}`);
+  }
+  if (durationText) {
+    lines.push(`**耗时**: ${durationText}`);
+  }
+  if (sourceLabel) {
+    lines.push(`**来源**: ${sourceLabel}`);
+  }
+  
+  // AI摘要
+  const summarySucceeded = Boolean(summaryUsed);
+  if (summarySucceeded && taskInfo) {
+    lines.push('');
+    lines.push(`**AI摘要**: ${taskInfo}`);
+  }
+  
+  // 输出内容
+  const outputText = summarySucceeded ? '' : String(outputContent || '').trim();
+  if (outputText) {
+    lines.push('');
+    lines.push('---');
+    lines.push('**输出内容**');
+    lines.push('```');
+    // 限制长度
+    const maxLen = 2000;
+    const content = outputText.length > maxLen ? outputText.substring(0, maxLen) + '\n...(已截断)' : outputText;
+    lines.push(content);
+    lines.push('```');
+  }
+  
+  return {
+    msgtype: 'markdown',
+    markdown: {
+      content: lines.join('\n')
+    }
+  };
+}
+
+
 // Logo图片key映射 - 支持深色/浅色主题
 const LOGO_MAP = {
   'codex': {
@@ -326,8 +414,18 @@ function sendWebhook(url, payload) {
       };
       const protocol = u.protocol === 'https:' ? https : http;
       const req = protocol.request(options, (res) => {
-        res.on('data', () => {});
-        res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode }));
+        let responseData = '';
+        res.on('data', (chunk) => (responseData += chunk));
+        res.on('end', () => {
+          try {
+            const result = responseData ? JSON.parse(responseData) : null;
+            console.log(`[webhook] 响应: statusCode=${res.statusCode}, body=${responseData}`);
+            resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, body: result });
+          } catch (e) {
+            console.log(`[webhook] 响应: statusCode=${res.statusCode}, body=${responseData}`);
+            resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, body: responseData });
+          }
+        });
       });
       req.on('error', (err) => resolve({ ok: false, error: err.message }));
       req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('timeout')));
@@ -350,49 +448,62 @@ async function notifyWebhook({ config, title, contentText, projectName, timestam
   const summaryText = summarySucceeded ? String(taskInfo || '').trim() : '';
   const outputText = summarySucceeded ? '' : String(outputContent || '').trim();
 
-  let payload;
-
-  if (useFeishuCard) {
-    // 使用飞书卡片格式
-    const card = await buildFeishuCard({
-      projectName,
-      timestamp,
-      durationText,
-      sourceLabel,
-      taskInfo: summaryText,
-      templatePath: channel.cardTemplatePath,
-      outputContent: outputText // 传递输出内容
-    });
-
-    payload = {
-      msg_type: 'interactive',
-      card: card
-    };
-  } else {
-    // 默认飞书bot "post"格式
-    const blocks = [contentText];
-    if (summaryText) blocks.push(`AI 摘要：${summaryText}`);
-    if (outputText) blocks.push(`输出内容：
-${outputText}`);
-    const textBlock = blocks.filter(Boolean).join('\n');
-    payload = {
-      msg_type: 'post',
-      content: {
-        post: {
-          zh_cn: {
-            title,
-            content: [[{ tag: 'text', text: textBlock }]]
+  // 构建飞书payload (卡片或post格式)
+  async function buildFeishuPayload() {
+    if (useFeishuCard) {
+      const card = await buildFeishuCard({
+        projectName,
+        timestamp,
+        durationText,
+        sourceLabel,
+        taskInfo: summaryText,
+        templatePath: channel.cardTemplatePath,
+        outputContent: outputText
+      });
+      return { msg_type: 'interactive', card };
+    } else {
+      const blocks = [contentText];
+      if (summaryText) blocks.push(`AI 摘要：${summaryText}`);
+      if (outputText) blocks.push(`输出内容：\n${outputText}`);
+      const textBlock = blocks.filter(Boolean).join('\n');
+      return {
+        msg_type: 'post',
+        content: {
+          post: {
+            zh_cn: {
+              title,
+              content: [[{ tag: 'text', text: textBlock }]]
+            }
           }
         }
-      }
-    };
+      };
+    }
   }
 
   const results = [];
   for (const url of urls) {
+    const webhookType = detectWebhookType(url);
+    let payload;
+
+    if (webhookType === WEBHOOK_TYPES.WEWORK) {
+      // 企业微信格式
+      payload = buildWeworkPayload({
+        title, contentText, projectName, timestamp, durationText, sourceLabel,
+        taskInfo, outputContent, summaryUsed
+      });
+    } else {
+      // 飞书格式 (默认)
+      // eslint-disable-next-line no-await-in-loop
+      payload = await buildFeishuPayload();
+    }
+
+    console.log(`[webhook] 发送到 ${webhookType}: ${url.substring(0, 50)}...`);
+    if (webhookType === WEBHOOK_TYPES.WEWORK) {
+      console.log(`[webhook] payload: ${JSON.stringify(payload, null, 2)}`);
+    }
     // eslint-disable-next-line no-await-in-loop
     const r = await sendWebhook(url, payload);
-    results.push({ url, ...r });
+    results.push({ url, webhookType, ...r });
   }
 
   const ok = results.every((r) => r.ok);
